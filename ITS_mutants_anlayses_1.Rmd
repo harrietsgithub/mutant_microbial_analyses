@@ -1,0 +1,475 @@
+---
+title: "Analysis ITS mutants part 1/2"
+author: "Harriet"
+date: "24/03/2021"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This is part 1/2 of ITS amplicon analyses.
+
+To analyse the fungal communities in our samples, DNA was extracted and sent for MiSeq Illumina ITS amplicon sequencing. Here is the code used for data analysis. 
+
+Note: "root" samples (roots, rhizoplane and close rhizosphere) and "soil" samples (distant rhizosphere) shouldn't be analyzed together. The DNA of these 2 types of samples was not extracted in the same manner: Nucleospin Plant Kit and Griffiths protocole, respectively. Moreover, soil samples ITS amplicons were quantified by qPCR with the addition of BSA (0,67mg/mL), which was not added for the root samples.
+
+The otu_table_filtered.biom file was used, which is the result of pre-processing (quality control, filtering...) done by the automatic pipeline (Tremblay and Yergeau, 2019).
+A total of 3 547 108 reads passed the quality control and 824 610 sequences were successfully clustered with classification.
+ASVs found in less than 2 samples were discarded.
+
+First, all the necessary packages were loaded and appropriate files called.
+
+
+```{r}
+library(phyloseq)
+library(data.table)
+library(vegan)
+library(ggplot2)
+library(readxl)
+library(dplyr)
+
+biom_file<-import_biom("~/metabarcoding_miPEP_mutants/ITS/ITS/manip_mutants/export/otu_tables/otu_table_filtered.biom","~/metabarcoding_miPEP_mutants/ITS/ITS/manip_mutants/export/tree/tree.fasttree","~/metabarcoding_miPEP_mutants/ITS/ITS/manip_mutants/export/otu_tables/otus.fasta", parseFunction=parse_taxonomy_greengenes)
+biom_file
+```
+
+A data frame was created from the mapping_file, which contains all the information concerning each sample. Each row corresponds to a sample and was named in consequence. Merge the biom file and the metadata into one phyloseq object.
+
+```{r}
+sample<- data.frame(fread("~/metabarcoding_miPEP_mutants/ITS/ITS/manip_mutants/export/mapping_file.tsv", sep="\t"), check.names=F)
+newsample <- sample %>% mutate(Type = replace(Type, Type== "WT6.5", "WT"))
+newsample <- newsample %>% mutate(Type = replace(Type, Type== "ago1", "ago1-27"))
+newsample <- newsample %>% mutate(Type = replace(Type, Type== "dcl1", "dcl1-2"))
+newsample <- newsample %>% mutate(Type = replace(Type, Type== "hen1", "hen1-4"))
+newsample <- newsample %>% mutate(Type = replace(Type, Type== "Control", "Unplanted_soil"))
+sample=sample_data(newsample)
+
+rownames(sample)<-sample$`#SampleID`
+merge<-merge_phyloseq(biom_file,sample)
+merge
+```
+
+Removed WT14 samples: these samples are biologically unappropriate for our analysis, as they were not cultivated and sampled in the same conditions as the other samples. Therefore, only 2 wild type samples were appropriate for the following analyses, which was statistically detrimental.
+
+```{r}
+Samples_toRemove <- c(Type="WT14")
+subset_samples(merge, Type %in% Samples_toRemove)
+subset_samples(merge, !(Type%in%Samples_toRemove))
+
+merge_noWT14 <- subset_samples(merge, !(Type%in%Samples_toRemove))
+merge_noWT14 #should have only 48 samples (-2 WT14 roots, -2 WT14 soil)
+```
+
+Extracted and updated the taxa and OTU table.
+
+```{r}
+tax_table = tax_table(merge_noWT14)
+#remplacer les noms de colonnes Rank1, rank2.. par les noms de taxons
+colnames(tax_table) = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "rank8", "rank9", "rank10", "rank11","rank12")
+#write.table(tax_table, "tax_table.txt")
+
+OTU_table = otu_table(merge_noWT14)
+#write.table(OTU_table, "OTU_table.txt")
+
+```
+
+Kept ASVs that are at least present once in two samples (this step is needed, because we took out WT14 samples, some ASVs are only present in 1 or 2 samples). Two samples because, we have two WT roots and two WT soils (in case ASVs are specific to one or the other). Updated taxa and OTU table after.
+
+```{r}
+phylo_filtered = filter_taxa(merge_noWT14, function(x) sum(x >= 1)>= (2), TRUE)
+OTU_table_phylo_filtered = otu_table(phylo_filtered)
+#write.table(OTU_table_phylo_filtered, "OTU_table_phylo_filtered.txt")
+tax_table_phylo_filtered = tax_table(phylo_filtered)
+#write.table(tax_table_phylo_filtered, "tax_table_phylo_filtered.txt")
+```
+
+ITS sequencing does not allow for "real" quantitative data. To overcome this, ITS amplicons were quantified by qPCR, along with a standard curve, to evaluate the "absolute" number of copies of ITS in each sample. The mean Ct was converted to a number of copies, by using the equation of the standard curve. A ratio of fungal ITS, out of the total fungal and non-fungal ITS, was applied to each sample, corresponding to the sequences counted during sequencing. The number of copies was used to replace the total sum of ITS ASVs, per sample, and each ASV was re-caculated as a number of copies. The resulting "absolute" abundance ASV table needed to be imported into R and processed into a new phyloseq object. 
+
+1) Export phylo_filtered OTU table 
+2) Open OTU table with Excel
+    - align samples with their correct column
+    - add "calculs" sheet and add "Samples" line and a "ASV ID" column
+    - line 2 = number of ITS copies/sample  (final number of copies, after multplied by ITS ratio=nb fungal ITS/total nb of ITS)
+    - CALCULATION: to repeat for each sample: ASV = nb seq ASV * nb copies ITS / sum sequences in that sample 
+3) Add a spread sheed to the Excel file "quant abs"
+    -copy/paste the "calculs" sheet with just the data "1,2,3"
+    -delete the line 2 (with the number of copies)
+    -save as an Excel file (.xlsx)
+4) Put all the cells into format "Number" with no decimals and export the active sheet as .txt (Tabulation)
+5) Go to Galaxy.genouest.org and upload your .txt file, then search for "convert between BIOM table formats" input =.txt and output = BIOM1 file "OTU TABLE". 
+6) Download the biom file and import to R  
+
+```{r}
+otu_biom <- import_biom("~/metabarcoding_miPEP_mutants/ITS/ITS/manip_mutants/otu_biom_ITS_mutants.biom1")
+
+tax <- tax_table(tax_table_phylo_filtered) #taxa hasn't changed
+
+samples_wo14 <- sample_data(merge_noWT14) #metadata hasn't changed
+
+phylo_abs_ITS <- merge_phyloseq(tax,otu_biom,samples_wo14)
+
+#Before continuing, we must discard the sample RTL1myc-3 from the root samples, because no valid Ct was measured in order to quantify the number of ITS copies in this sample.
+Sample_toRemove <- c("X.SampleID"="RTL1myc.3-RACINE")
+subset_samples(phylo_abs_ITS, X.SampleID %in% Sample_toRemove)
+subset_samples(phylo_abs_ITS, !(X.SampleID %in% Sample_toRemove))
+phylo_abs_ITS <- subset_samples(phylo_abs_ITS, !(X.SampleID %in% Sample_toRemove))
+phylo_abs_ITS #should have only 47 samples now (-RTL1myc-3-RACINE)
+
+tax_table = tax_table(phylo_abs_ITS)
+#remplacer les noms de colonnes Rank1, rank2.. par les noms de taxons
+colnames(tax_table) = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "rank8", "rank9", "rank10", "rank11","rank12")
+#write.table(tax_table, "tax_table.txt")
+
+OTU_table = otu_table(phylo_abs_ITS)
+samples_final <- sample_data(phylo_abs_ITS)
+
+phylo_abs_ITS <- merge_phyloseq(tax_table,OTU_table,samples_final)
+
+```
+
+To always visualise the different mutants in the same order: a "correct order" was created and assigned to the phyloseq object. Root and soil samples were separated into two distinct phyloseq objects for the following analyses.
+
+```{r}
+correct.order <- c( "ago1-27", "dcl1-2", "hen1-4", "RTL1", "RTL1myc","WT","Unplanted_soil")
+sample_data(phylo_abs_ITS)$Type <- factor(sample_data(phylo_abs_ITS)$Type, levels = correct.order)
+levels(get_variable(phylo_abs_ITS, "Type")) 
+
+phylo_roots <- subset_samples(phylo_abs_ITS, Compartment=="RACINE")
+phylo_soil <- subset_samples(phylo_abs_ITS, Compartment=="SOL")
+```
+
+
+Venn diagrams to show shared ASVs between treatments: limited to 5 on a figure.
+Functions and libraries for Venn diagram.
+
+```{r}
+library(VennDiagram)
+library(gplots)
+library(reshape2)
+display_venn <- function(x, ...){
+  library(VennDiagram)
+  grid.newpage()
+  venn_object <- venn.diagram(x, filename = NULL, ...)
+  grid.draw(venn_object)
+}
+library(RColorBrewer)
+Intersect <- function (x) {  
+  # Multiple set version of intersect
+  # x is a list
+  if (length(x) == 1) {
+    unlist(x)
+  } else if (length(x) == 2) {
+    intersect(x[[1]], x[[2]])
+  } else if (length(x) > 2){
+    intersect(x[[1]], Intersect(x[-1]))
+  }
+}
+
+Union <- function (x) {  
+  # Multiple set version of union
+  # x is a list
+  if (length(x) == 1) {
+    unlist(x)
+  } else if (length(x) == 2) {
+    union(x[[1]], x[[2]])
+  } else if (length(x) > 2) {
+    union(x[[1]], Union(x[-1]))
+  }
+}
+
+Setdiff <- function (x, y) {
+  # Remove the union of the y's from the common x's. 
+  # x and y are lists of characters.
+  xx <- Intersect(x)
+  yy <- Union(y)
+  setdiff(xx, yy)
+}
+```
+
+Data was processed into lists prior to creating the diagram.
+
+Root samples
+
+```{r}
+# 1) Use a phyloseq object with 1 variable
+
+# 2) The next steps are performed on the means of each treatment, so merge treated-samples 
+merge_phyloseq_subset<-merge_samples(phylo_roots,"Type")
+
+# The Types will become numbers in the same order as in the phyloseq:
+# 1=ago; 2=dcl; 3=hen; 4=RTL1; 5=RTL1myc and 6=WT
+
+# 3) Create a table with a dataframe such as OTUs=columns and Type=rows
+table<-t(merge_phyloseq_subset@otu_table@.Data)
+
+# 4) Create a vector per Type to have the right format for Venn Diagram
+cat_1 <- rownames(table)[which(table[,1]!=0)]
+cat_2 <- rownames(table)[which(table[,2]!=0)]
+cat_3 <- rownames(table)[which(table[,3]!=0)]
+cat_4 <- rownames(table)[which(table[,4]!=0)]
+cat_5 <- rownames(table)[which(table[,5]!=0)]
+cat_6 <- rownames(table)[which(table[,6]!=0)]
+
+# 5) These vectors need to be formatted into a list object
+input <- list("ago1-27"=cat_1,  "dcl1-2"=cat_2, "hen1-4"=cat_3, "RTL1"=cat_4, "RTL1myc"=cat_5, "WT"=cat_6)
+
+# List with 5 or less Types for the Venn diagram
+input_select <- list("ago1-27"=cat_1,"dcl1-2"=cat_2, "hen1-4"=cat_3,"RTL1"=cat_4, "WT"=cat_6)
+
+myCol <- brewer.pal(5, "Set2") # the first number = nb of conditions
+display_venn(input_select, lwd = 2, lty ='blank',  fill=myCol, 
+        # Numbers
+        cex = .9,
+        fontface = "italic",
+        # Set names
+        cat.cex = 1,
+        cat.fontface = "bold",
+        cat.default.pos = "outer", cat.dist =0.09)
+
+# What species are common to all root samples ?
+Intersect(input)
+# 8 ASVs : "30"  "49"  "20"  "28"  "2"   "17"  "153" "75"
+
+# What species are common to mutants but not WT ?
+Setdiff(input[c("ago1-27", "dcl1-2","hen1-4","RTL1","RTL1myc")], input[c("WT")])
+# 3 ASVs :  "11" (Agaricomycetes) "53" "85" (both just Fungi)
+
+# What species are in WT but not in any other mutant ?
+Setdiff(input[c("WT")], input[c("ago1-27", "dcl1-2","hen1-4","RTL1","RTL1myc")])
+#1 ASV: "140" (Triparticalcar = Chytrid)
+```
+
+Soil samples 
+
+```{r}
+# 1) Use a phyloseq object with 1 variable 
+
+# 2) The next steps are performed on the means of each treatment, so merge treated-samples 
+merge_phyloseq_subset<-merge_samples(phylo_soil,"Type")
+
+# The Types will become numbers in the same order as in the phyloseq:
+# 1=ago; 2=dcl; 3=hen; 4=RTL1; 5=RTL1myc, 6=WT and 7=Unplanted_soil
+
+# 3) Create a table with a dataframe such as OTUs=columns and Type=rows
+table<-t(merge_phyloseq_subset@otu_table@.Data)
+
+# 4) Create a vector per Type to have the right format for Venn Diagram
+cat_1 <- rownames(table)[which(table[,1]!=0)]
+cat_2 <- rownames(table)[which(table[,2]!=0)]
+cat_3 <- rownames(table)[which(table[,3]!=0)]
+cat_4 <- rownames(table)[which(table[,4]!=0)]
+cat_5 <- rownames(table)[which(table[,5]!=0)]
+cat_6 <- rownames(table)[which(table[,6]!=0)]
+cat_7 <- rownames(table)[which(table[,7]!=0)]
+
+# 5) These vectors need to be formatted into a list object
+input <- list("ago1-27"=cat_1,  "dcl1-2"=cat_2, "hen1-4"=cat_3, "RTL1"=cat_4, "RTL1myc"=cat_5, "WT"=cat_6, "Unplanted_soil"=cat_7)
+
+# List with 5 or less Types for the Venn diagram
+input_select <- list("ago1-27"=cat_1,  "dcl1-2"=cat_2, "RTL1"=cat_4, "WT"=cat_6, "Unplanted_soil"=cat_7)
+
+myCol <- brewer.pal(5, "Set2") # the first number = nb of conditions
+display_venn(input_select, lwd = 2, lty ='blank',  fill=myCol, 
+        # Numbers
+        cex = .9,
+        fontface = "italic",
+        # Set names
+        cat.cex = 1,
+        cat.fontface = "bold",
+        cat.default.pos = "outer", cat.dist =0.09)
+
+# What species are common to all distant rhizo samples ?
+Intersect(input)
+# 3 ASVs : "22" "30" "2"
+
+# Same question, but without Unplanted_soil.
+Setdiff(input[c("ago1-27", "dcl1-2","hen1-4","RTL1","RTL1myc", "WT")], input[c("Unplanted_soil")])
+# 4 ASVs:"49"  "103" "70"  "98" 
+
+# What species are common to mutants but not WT ?
+Setdiff(input[c("ago1-27", "dcl1-2","hen1-4","RTL1","RTL1myc")], input[c("WT")])
+# 7 ASVs :  "20"  "28"  "104" "73"  "17"  "75"  "64" 
+
+# What species are in WT but not in any other mutant ?
+Setdiff(input[c("WT")], input[c("ago1-27", "dcl1-2","hen1-4","RTL1","RTL1myc", "Unplanted_soil")])
+#0 ASV
+```
+
+Nice Theme for plots
+
+```{r}
+  niceTheme <- theme(
+    axis.text.x = element_blank(),
+    axis.title.x=element_blank(),
+        axis.ticks.x=element_blank(),
+    axis.text.y = element_text(size = 10),
+    legend.text = element_text(size = 9),
+    strip.text = element_text(size = 10), strip.background = element_rect(colour = "black", fill = "white"),
+  legend.position="right",panel.background = element_rect(fill = "white",colour="grey"),panel.grid.major = element_line(colour = "white"))
+```
+
+Plot abundances, top 10 phyla in all samples
+
+```{r, fig.width = 10, fig.height = 7}
+library(microbiome)
+library(dplyr)
+pseq <- phylo_abs_ITS %>% aggregate_taxa(level = "Phylum")
+ps1.com.fam <- microbiome::aggregate_top_taxa(pseq, "Phylum", top = 10)
+plot_bar(ps1.com.fam, "Phylum", fill="Phylum", facet_grid=Compartment~Type)+
+  niceTheme
+
+```
+
+
+Top 10 phyla... in soil samples
+
+```{r, fig.width = 10, fig.height = 7}
+pseq_soil <- phylo_soil %>% aggregate_taxa(level = "Phylum")
+ps1.com.fam_soil <- microbiome::aggregate_top_taxa(pseq_soil, "Phylum", top = 10)
+
+taxa_abundance_table_phylum_soil <- psmelt(ps1.com.fam_soil)
+
+StackedBarPlot_phylum <- taxa_abundance_table_phylum_soil %>% 
+  ggplot(aes(x =Sample, y = Abundance, fill = Phylum)) +
+  geom_bar(stat = "identity") +
+  labs(x = "",
+       y = "Absolute Abundance (copies/50ng DNA)",
+       title = "Top Fungal Phyla in distant rhizosphere") +
+  facet_grid(~ Type, scales = "free") + niceTheme +
+scale_fill_manual(values = c("darkblue", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "lightskyblue", "darkgreen", "deeppink", "khaki2","darkorange1", "firebrick", "brown1", "darkorange1", "cyan1", "royalblue4", "darksalmon", "darkblue",
+"royalblue4", "dodgerblue3", "steelblue1", "lightskyblue", "darkseagreen", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "brown1", "darkorange1", "cyan1", "darkgrey"))
+StackedBarPlot_phylum
+
+#Create a boxplot to show differences in composition of each phylum per Type
+
+phyloseq::psmelt(ps1.com.fam_soil) %>%
+ggplot(data = ., aes(x = Type, y = Abundance)) +
+  geom_boxplot(outlier.shape  = NA) +
+  geom_jitter(aes(color = OTU), height = 0, width = .2) +
+  labs(x = "", y = "Absolute Abundance (copies per 50ng DNA)\n") +
+  facet_wrap(~ OTU, scales = "free") + guides(col = FALSE) +theme_classic() +theme(axis.text.x=element_text(size=8, angle=45,hjust=1)) + ggtitle(label = "Abundance of top fungal phyla in distant rhizosphere")
+
+# Transform Taxa counts to relative abundance for nice abundance plots
+ps1_soil_phylum_relabun <- transform_sample_counts(ps1.com.fam_soil, function(OTU) OTU/sum(OTU) * 100)
+
+taxa_abundance_table_phylum_soil_rel <- psmelt(ps1_soil_phylum_relabun)
+
+
+StackedBarPlot_phylum_rel <- taxa_abundance_table_phylum_soil_rel %>% 
+  ggplot(aes(x =Sample, y = Abundance, fill = Phylum)) +
+  geom_bar(stat = "identity") +
+  labs(x = "",
+       y = "Relative Abundance",
+       title = "Top Fungal Phyla Relative Abundance in distant rhizosphere") +
+  facet_grid(~ Type, scales = "free") + niceTheme+
+scale_fill_manual(values = c("darkblue", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "lightskyblue", "darkgreen", "deeppink", "khaki2","darkorange1", "firebrick", "brown1", "darkorange1", "cyan1", "royalblue4", "darksalmon", "darkblue",
+"royalblue4", "dodgerblue3", "steelblue1", "lightskyblue", "darkseagreen", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "brown1", "darkorange1", "cyan1", "darkgrey"))
+StackedBarPlot_phylum_rel
+```
+
+Top 10 phyla in root samples...
+
+```{r, fig.width = 10, fig.height = 7}
+pseq_roots <- phylo_roots %>% aggregate_taxa(level = "Phylum")
+ps1.com.fam_roots <- microbiome::aggregate_top_taxa(pseq_roots, "Phylum", top = 10)
+
+taxa_abundance_table_phylum_roots <- psmelt(ps1.com.fam_roots)
+
+StackedBarPlot_phylum <- taxa_abundance_table_phylum_roots %>% 
+  ggplot(aes(x =Sample, y = Abundance, fill = Phylum)) +
+  geom_bar(stat = "identity") +
+  labs(x = "",
+       y = "Absolute Abundance (copies/50ng DNA)",
+       title = "Top Fungal Phyla in roots and close rhizosphere") +
+  facet_grid(~ Type, scales = "free") + niceTheme +
+scale_fill_manual(values = c("darkblue", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "lightskyblue", "darkgreen", "deeppink", "khaki2","darkorange1", "firebrick", "brown1", "darkorange1", "cyan1", "royalblue4", "darksalmon", "darkblue",
+"royalblue4", "dodgerblue3", "steelblue1", "lightskyblue", "darkseagreen", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "brown1", "darkorange1", "cyan1", "darkgrey"))
+
+StackedBarPlot_phylum
+
+#Create a boxplot to show differences in composition of each phylum per Type
+
+phyloseq::psmelt(ps1.com.fam_roots) %>%
+ggplot(data = ., aes(x = Type, y = Abundance)) +
+  geom_boxplot(outlier.shape  = NA) +
+  geom_jitter(aes(color = OTU), height = 0, width = .2) +
+  labs(x = "", y = "Absolute Abundance (copies per 50ng DNA)\n") +
+  facet_wrap(~ OTU, scales = "free") + guides(col = FALSE) +theme_classic() +theme(axis.text.x=element_text(size=8, angle=45,hjust=1)) + ggtitle(label = "Abundance of 10 fungal phyla in roots and close rhizosphere")
+
+# Transform Taxa counts to relative abundance for nice abundance plots
+ps1_roots_phylum_relabun <- transform_sample_counts(ps1.com.fam_roots, function(OTU) OTU/sum(OTU) * 100)
+
+taxa_abundance_table_phylum_roots_rel <- psmelt(ps1_roots_phylum_relabun)
+
+StackedBarPlot_phylum_rel <- taxa_abundance_table_phylum_roots_rel %>% 
+  ggplot(aes(x =Sample, y = Abundance, fill = Phylum)) +
+  geom_bar(stat = "identity") +
+  labs(x = "",
+       y = "Relative Abundance",
+       title = "Top Fungal Phyla Relative Abundance in roots and close rhizosphere") +
+  facet_grid(~ Type, scales = "free") + niceTheme+
+scale_fill_manual(values = c("darkblue", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "lightskyblue", "darkgreen", "deeppink", "khaki2","darkorange1", "firebrick", "brown1", "darkorange1", "cyan1", "royalblue4", "darksalmon", "darkblue",
+"royalblue4", "dodgerblue3", "steelblue1", "lightskyblue", "darkseagreen", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "brown1", "darkorange1", "cyan1", "darkgrey"))
+StackedBarPlot_phylum_rel
+
+```
+
+Top 10 Genera...in soil samples
+
+```{r, fig.width = 10, fig.height = 7}
+pseq_soil_genus <- phylo_soil %>% aggregate_taxa(level = "Genus")
+ps1._soil_genus_top10 <- microbiome::aggregate_top_taxa(pseq_soil_genus, "Genus", top = 10)
+
+taxa_abundance_table_genus_soil <- psmelt(ps1._soil_genus_top10)
+
+StackedBarPlot_genus_soil <- taxa_abundance_table_genus_soil %>% 
+  ggplot(aes(x =Sample, y = Abundance, fill = Genus)) +
+  geom_bar(stat = "identity") +
+  labs(x = "",
+       y = "Absolute Abundance (copies per 50ng DNA)",
+       title = "Top Fungal Genera in distant rhizosphere") +
+  facet_grid(~ Type, scales = "free") + niceTheme 
+
+StackedBarPlot_genus_soil
+
+#Boxplot
+
+phyloseq::psmelt(ps1._soil_genus_top10) %>%
+ggplot(data = ., aes(x = Type, y = Abundance)) +
+  geom_boxplot(outlier.shape  = NA) +
+  geom_jitter(aes(color = OTU), height = 0, width = .2) +
+  labs(x = "", y = "Absolute Abundance (copies per 50ng DNA)\n") +
+  facet_wrap(~ OTU, scales = "free") + guides(col = FALSE) +theme_classic() +theme(axis.text.x=element_text(size=8, angle=45,hjust=1)) + ggtitle(label = "Abundance of fungal genera in distant rhizosphere")
+```
+
+Top 10 genera in root samples...
+
+```{r, fig.width = 10, fig.height = 7}
+pseq_roots_genus <- phylo_roots %>% aggregate_taxa(level = "Genus")
+ps1._roots_genus_top10 <- microbiome::aggregate_top_taxa(pseq_roots_genus, "Genus", top = 10)
+
+taxa_abundance_table_genus_roots <- psmelt(ps1._roots_genus_top10)
+
+StackedBarPlot_genus_roots <- taxa_abundance_table_genus_roots %>% 
+  ggplot(aes(x =Sample, y = Abundance, fill = Genus)) +
+  geom_bar(stat = "identity") +
+  labs(x = "",
+       y = "Absolute Abundance (copies per 50ng DNA)",
+       title = "Top Fungal Genera in roots and close rhizosphere") +
+  facet_grid(~ Type, scales = "free") +   niceTheme
+
+StackedBarPlot_genus_roots
+
+#Boxplot  
+
+phyloseq::psmelt(ps1._roots_genus_top10) %>%
+ggplot(data = ., aes(x = Type, y = Abundance)) +
+  geom_boxplot(outlier.shape  = NA) +
+  geom_jitter(aes(color = OTU), height = 0, width = .2) +
+  labs(x = "", y = "Absolute Abundance (copies per 50ng DNA)\n") +
+  facet_wrap(~ OTU, scales = "free")  + guides(col = FALSE) +theme_classic() +theme(axis.text.x=element_text(size=8, angle=45,hjust=1)) + ggtitle(label = "Abundance of fungal genera in roots and close rhizosphere")
+
+```
