@@ -317,7 +317,11 @@ Plot abundances, top 10 phyla in all samples
 library(microbiome)
 library(dplyr)
 pseq <- phylo_abs_ITS %>% aggregate_taxa(level = "Phylum")
-ps1.com.fam <- microbiome::aggregate_top_taxa(pseq, "Phylum", top = 10)
+#ps1.com.fam <- microbiome::aggregate_top_taxa(pseq, "Phylum", top = 10) # this function is deprecated
+
+ps1.com.fam <- names(sort(taxa_sums(pseq), decreasing = TRUE))[1:10]
+ps1.com.fam <- prune_taxa(ps1.com.fam, pseq)
+
 plot_bar(ps1.com.fam, "Phylum", fill="Phylum", facet_grid=Compartment~Type)+
   niceTheme
 
@@ -328,7 +332,10 @@ Top 10 phyla... in soil samples
 
 ```{r, fig.width = 10, fig.height = 7}
 pseq_soil <- phylo_soil %>% aggregate_taxa(level = "Phylum")
-ps1.com.fam_soil <- microbiome::aggregate_top_taxa(pseq_soil, "Phylum", top = 10)
+#ps1.com.fam_soil <- microbiome::aggregate_top_taxa(pseq_soil, "Phylum", top = 10)
+
+ps1.com.fam_soil <- names(sort(taxa_sums(pseq_soil), decreasing = TRUE))[1:10]
+ps1.com.fam_soil <- prune_taxa(ps1.com.fam_soil, pseq_soil)
 
 taxa_abundance_table_phylum_soil <- psmelt(ps1.com.fam_soil)
 
@@ -374,7 +381,10 @@ Top 10 phyla in root samples...
 
 ```{r, fig.width = 10, fig.height = 7}
 pseq_roots <- phylo_roots %>% aggregate_taxa(level = "Phylum")
-ps1.com.fam_roots <- microbiome::aggregate_top_taxa(pseq_roots, "Phylum", top = 10)
+#ps1.com.fam_roots <- microbiome::aggregate_top_taxa(pseq_roots, "Phylum", top = 10)
+
+ps1.com.fam_roots <- names(sort(taxa_sums(pseq_roots), decreasing = TRUE))[1:10]
+ps1.com.fam_roots <- prune_taxa(ps1.com.fam_roots, pseq_roots)
 
 taxa_abundance_table_phylum_roots <- psmelt(ps1.com.fam_roots)
 
@@ -421,7 +431,10 @@ Top 10 Genera...in soil samples
 
 ```{r, fig.width = 10, fig.height = 7}
 pseq_soil_genus <- phylo_soil %>% aggregate_taxa(level = "Genus")
-ps1._soil_genus_top10 <- microbiome::aggregate_top_taxa(pseq_soil_genus, "Genus", top = 10)
+#ps1._soil_genus_top10 <- microbiome::aggregate_top_taxa(pseq_soil_genus, "Genus", top = 10)
+
+ps1._soil_genus_top10 <- names(sort(taxa_sums(pseq_soil_genus), decreasing = TRUE))[1:10]
+ps1._soil_genus_top10 <- prune_taxa(ps1._soil_genus_top10, pseq_soil_genus)
 
 taxa_abundance_table_genus_soil <- psmelt(ps1._soil_genus_top10)
 
@@ -449,7 +462,10 @@ Top 10 genera in root samples...
 
 ```{r, fig.width = 10, fig.height = 7}
 pseq_roots_genus <- phylo_roots %>% aggregate_taxa(level = "Genus")
-ps1._roots_genus_top10 <- microbiome::aggregate_top_taxa(pseq_roots_genus, "Genus", top = 10)
+#ps1._roots_genus_top10 <- microbiome::aggregate_top_taxa(pseq_roots_genus, "Genus", top = 10)
+
+ps1._roots_genus_top10 <- names(sort(taxa_sums(pseq_roots_genus), decreasing = TRUE))[1:10]
+ps1._roots_genus_top10 <- prune_taxa(ps1._roots_genus_top10, pseq_roots_genus)
 
 taxa_abundance_table_genus_roots <- psmelt(ps1._roots_genus_top10)
 
